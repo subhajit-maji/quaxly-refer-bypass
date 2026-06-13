@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-import threading
+import sys
 import time
 import random
 import logging
 import requests
 import concurrent.futures
 from faker import Faker
+
+# Force real-time output
+sys.stdout.reconfigure(line_buffering=True)
 
 REFERRAL_CODE = "SUBHAJIT"
 CONCURRENCY = 2
@@ -14,8 +17,20 @@ SITE_KEY = "0x4AAAAAADfBdk1rel3DLtAS"
 QUAXLY_API = "https://panel.quaxly.com/api/user/auth/register"
 
 fake = Faker()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger("QuaxlyAutoReg")
+
+# Rotating user agents
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+]
 
 def generate_user():
     first = fake.first_name()
@@ -50,21 +65,47 @@ def register_one(attempt_id):
     for retry in range(3):
         token = get_turnstile_token()
         if not token:
+            logger.warning(f"[{attempt_id}] No token, retry {retry+1}/3")
             time.sleep(5)
             continue
+        
         user["turnstile_token"] = token
-        headers = {"User-Agent":"Mozilla/5.0","Accept":"application/json","Content-Type":"application/json","Origin":"https://panel.quaxly.com","Referer":"https://panel.quaxly.com/auth/register","Cookie":f"billingreferrals_code={REFERRAL_CODE}"}
+        user_agent = random.choice(USER_AGENTS)
+        headers = {
+            "User-Agent": user_agent,
+            "Accept": "application/json",
+            "Accept-Language": random.choice(["en-US,en;q=0.9", "en-GB,en;q=0.8"]),
+            "Content-Type": "application/json",
+            "Origin": "https://panel.quaxly.com",
+            "Referer": "https://panel.quaxly.com/auth/register",
+            "Cookie": f"billingreferrals_code={REFERRAL_CODE}"
+        }
         try:
             resp = requests.put(QUAXLY_API, json=user, headers=headers, timeout=15)
-            if resp.status_code in (200,201) and resp.json().get("success"):
-                logger.info(f"✅ SUCCESS [{attempt_id}] {user['email']} / {user['password']}")
-                return True
+            
+            # Print raw response for debugging
+            print(f"[DEBUG] HTTP {resp.status_code} - {resp.text[:300]}")
+            
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                # Check multiple possible success fields
+                if data.get("success") or data.get("status") == "success" or data.get("message") == "Registration successful":
+                    logger.info(f"✅ SUCCESS [{attempt_id}] {user['email']} / {user['password']}")
+                    # Save to file
+                    with open("successful_accounts.txt", "a") as f:
+                        f.write(f"{user['email']}:{user['password']}\n")
+                    return True
+                else:
+                    logger.warning(f"[{attempt_id}] API returned success=False: {data}")
+                    return False
             elif resp.status_code == 429:
+                logger.warning(f"[{attempt_id}] Rate limited, waiting 30s")
                 time.sleep(30)
             else:
-                logger.warning(f"[{attempt_id}] Fail: {resp.json().get('message','?')}")
+                logger.warning(f"[{attempt_id}] HTTP {resp.status_code}: {resp.text[:200]}")
                 return False
         except Exception as e:
+            logger.warning(f"[{attempt_id}] Request exception: {e}")
             time.sleep(5)
     logger.warning(f"[{attempt_id}] Failed after retries")
     return False

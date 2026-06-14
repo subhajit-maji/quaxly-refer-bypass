@@ -10,7 +10,7 @@ from faker import Faker
 # Force real-time output
 sys.stdout.reconfigure(line_buffering=True)
 
-REFERRAL_CODE = "SUBHAJIT"
+REFERRAL_CODE = "ADD YOUR"
 CONCURRENCY = 2
 SOLVER_URL = "https://cf-solver-renofc.my.id/api/solvebeta"
 SITE_KEY = "0x4AAAAAADfBdk1rel3DLtAS"
